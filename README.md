@@ -21,6 +21,8 @@ syntax that runs on it, the hazards, and the bench evidence behind each measured
 - `variables.md`
 - `dialogs.md`
 - `hazards.md`
+- `operation.md`
+- `ui.md`
 - `integration.md`
 - `evidence.md`
 - `examples/`

@@ -29,6 +29,8 @@ description: Rules for writing G-code and macros for the DDCS V3 / DM500 CNC con
 - `variables.md`
 - `dialogs.md`
 - `hazards.md`
+- `operation.md`
+- `ui.md`
 - `integration.md`
 - `evidence.md`
 - `examples/`

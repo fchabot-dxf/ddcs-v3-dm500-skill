@@ -2,4 +2,4 @@
 
 > Nothing in this file is bench-measured.
 
-Nothing here for the DDCS V3 / DM500: no network, Modbus, keyboard or I/O fact is recorded for it.
+Nothing here for the DDCS V3 / DM500: no network, Modbus or I/O fact is recorded for it.
