@@ -3,7 +3,7 @@ name: ddcs-v3-dm500
 description: Rules for writing G-code and macros for the DDCS V3 / DM500 CNC controller (not the DDCS V4.1 or the Expert / M350, not Fanuc Macro B): syntax, variables and hazards (declared forms, not bench-measured yet).
 ---
 
-# DDCS V3 / DM500 — rules for an AI writing code
+# DDCS V3 / DM500 — Rulebook
 
 > For the DDCS V4.1, use the `ddcs-v41` skill; for the DDCS Expert / M350, use the `ddcs-expert` skill instead: this one is for the DDCS V3 / DM500 only.
 

@@ -1,8 +1,8 @@
-# DDCS V3 / DM500 — AI pack
+# DDCS V3 / DM500 — Rulebook
 
 > Nothing in this file is bench-measured.
 
-A context pack for an AI assistant that writes G-code and macros for the **DDCS V3 / DM500**: the rules in plain words, the
+The Rulebook for writing G-code and macros for the **DDCS V3 / DM500**: the rules in plain words, the
 syntax that runs on it, the hazards, and the bench evidence behind each measured rule.
 
 ⚠ No bench measurement of the DDCS V3 / DM500 is recorded: this pack holds declared forms only.
@@ -10,8 +10,7 @@ syntax that runs on it, the hazards, and the bench evidence behind each measured
 ## How to load it
 
 - **From git**: clone this repository into `~/.claude/skills/` (it carries a `SKILL.md`) and `git pull` to update it; then fill `vendor/` from your own controller (`vendor/README.md`).
-- **Claude Code**: copy this folder into `~/.claude/skills/` (it carries a `SKILL.md`), or attach the files to a conversation.
-- **Any other assistant**: attach `SKILL.md` first, then the files it points to.
+- **An AI assistant**: in Claude Code, copy this folder into `~/.claude/skills/` (it carries a `SKILL.md`); in any other, attach `SKILL.md` first, then the files it points to.
 
 ## Files
 
