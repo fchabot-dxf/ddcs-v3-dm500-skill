@@ -9,8 +9,8 @@ syntax that runs on it, the hazards, and the bench evidence behind each measured
 
 ## How to load it
 
-- **From git**: clone this repository into `~/.claude/skills/` (it carries a `SKILL.md`) and `git pull` to update it; then fill `vendor/` from your own controller (`vendor/README.md`).
-- **An AI assistant**: in Claude Code, copy this folder into `~/.claude/skills/` (it carries a `SKILL.md`); in any other, attach `SKILL.md` first, then the files it points to.
+- **From git**: clone this repository anywhere and `git pull` to update it; then fill `vendor/` from your own controller (`vendor/README.md`).
+- **An AI assistant**: give it `SKILL.md` first, then the files it points to. If your assistant supports skill folders, add this folder as one (it carries a `SKILL.md`).
 
 ## Files
 
