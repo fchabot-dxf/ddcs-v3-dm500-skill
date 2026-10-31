@@ -2,6 +2,21 @@
 
 > Nothing in this file is bench-measured.
 
+## Access: who reads and writes, and when
+
+Where a read or a write comes from, and when it works. Each mark points to the fact that says so: its page, and its bench test there. ✅ works, ⛔ does not, ⚠️ with a catch, ❔ no fact says yet, — does not apply.
+
+| from | read at idle | read during a run | write at idle | write during a run | survives a reboot |
+|---|---|---|---|---|---|
+| the running program | — | ❔ | — | ❔ | ❔ |
+| a hook macro (an M-code body, a K-key or key-N macro, a start or error hook) | ❔ | ❔ | ❔ | ❔ | ❔ |
+| MDI (a line typed on the pendant) | ❔ | ❔ | ❔ | ❔ | ❔ |
+| injected G-code (Modbus register 3000) | ❔ | ❔ | ❔ | ❔ | ❔ |
+| the uservar file (a PC, over the share) | ❔ | ❔ | ❔ | ❔ | ❔ |
+| Modbus registers (a PC) | ❔ | ❔ | ❔ | ❔ | ❔ |
+| the setting file / Param page | ❔ | ❔ | ❔ | ❔ | ❔ |
+| the pendant | ❔ | ❔ | ❔ | ❔ | ❔ |
+
 Source: **the DM500's own eng file (install dump 2026-04-08, ddcsv3.3)**, a variable table for the DDCS V3 / DM500. The descriptions are the table's own words.
 
 > These are the DM500 setting/parameter numbers with their English labels, as the eng file numbers them; that they read as the same macro addresses is not confirmed.
