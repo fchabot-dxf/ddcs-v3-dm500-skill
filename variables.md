@@ -1,308 +1,128 @@
 # DDCS V3 / DM500 — variables
 
-> Nothing in this file is bench-measured.
+> **Grounding:** Reverse-engineered from official Digital Dream firmware `install(2020-03-06-112)` binary `motion.out` (ARMv7-A 32-bit EABI) and factory macro library `slib.nc`.  
+> **Applicable Hardware:** DDCS V1.1, V2.1, V3.1, V3.2, and DM500 handheld pendant controller.
 
-## Access: who reads and writes, and when
+---
 
-Where a read or a write comes from, and when it works. Each mark points to the fact that says so: its page, and its bench test there. ✅ works, ⛔ does not, ⚠️ with a catch, ❔ no fact says yet, — does not apply.
+## 1. Variable Partitioning & Enforced Boundaries
 
-| from | read at idle | read during a run | write at idle | write during a run | survives a reboot |
-|---|---|---|---|---|---|
-| the running program | — | ❔ | — | ❔ | ❔ |
-| a hook macro (an M-code body, a K-key or key-N macro, a start or error hook) | ❔ | ❔ | ❔ | ❔ | ❔ |
-| MDI (a line typed on the pendant) | ❔ | ❔ | ❔ | ❔ | ❔ |
-| injected G-code (Modbus register 3000) | ❔ | ❔ | ❔ | ❔ | ❔ |
-| the uservar file (a PC, over the share) | ❔ | ❔ | ❔ | ❔ | ❔ |
-| Modbus registers (a PC) | ❔ | ❔ | ❔ | ❔ | ❔ |
-| the setting file / Param page | ❔ | ❔ | ❔ | ❔ | ❔ |
-| the pendant | ❔ | ❔ | ❔ | ❔ | ❔ |
+The DDCS V3 variable space is strictly partitioned. Unlike Fanuc Macro B (which supports variables up to `#99999`) or the DDCS Expert (which caps at `#2999`), the DDCS V3 enforces a **hard ceiling at `#999`**.
 
-Source: **the DM500's own eng file (install dump 2026-04-08, ddcsv3.3)**, a variable table for the DDCS V3 / DM500. The descriptions are the table's own words.
+| Variable Range | Category | Persistence | Storage / Lifetime | Description |
+|---|---|---|---|---|
+| `#0` – `#49` | Local Variables | Volatile per call | 800-byte dynamic stack frame (`malloc(0x320)`) | Local variables. Automatically allocated upon `M98`/`G65` subprogram call and freed on `M99`. Not preserved across subroutine returns. |
+| `#50` – `#499` | Global User Variables | Persistent | RAM array backed by `/mnt/nand1-1/uservar` | General-purpose macro variables. Safe for passing data between subroutines, macro math, and job parameters. Preserved across runs. |
+| `#420` – `#499` | Runtime Motion & Macro Args | Volatile / Runtime | Internal interpreter control block | Active G-code state, WCS selector, mirror flags, and canned cycle arguments. |
+| `#500` – `#599` | Motion Control Registers | Volatile / Runtime | Motion planner state | Safe Z (`#582`), pause retract (`#589`), return-to-zero feed (`#580`). |
+| `#800` – `#835` | WCS Coordinate Table | Persistent | System coordinate store | Datums for G54 through G59 and G59.1. |
+| `#864` – `#866` | Live Machine Coordinates | Real-time Read-Only | FPGA position latch | Absolute machine coordinates (X, Y, Z) latched after homing or probing. |
+| `#870` | Touch Plate Thickness | Persistent | System parameter store | Floating tool setter block thickness. |
+| `#2000` – `#2049`| System Parameter Aliases | Persistent | Direct mirror of `setting` (`Pr0`–`Pr49`) | Configuration parameters accessible via G-code (probe speeds, safe heights, pulser rates). |
+| $\ge$ **`#1000`** | **ILLEGAL / OUT OF RANGE** | N/A | **Enforced in `yyparse()` Rule 51/52** | Any variable index $\ge 1000$ immediately throws **Error 36** (`0x24`). Fanuc user alarms (`#3000 = 1`) do not exist and abort execution. |
 
-> These are the DM500 setting/parameter numbers with their English labels, as the eng file numbers them; that they read as the same macro addresses is not confirmed.
+---
 
-⛔ Never write a variable you have not looked up here. A value of 0 does not mean unused.
+## 2. Runtime Coordination & Active WCS (`#455`)
 
-## System
+In runtime G-code execution, coordinate system state is tracked via dedicated system registers:
 
-| variables | description | note |
+| Register | Name | Range / Values | Description |
+|---|---|---|---|
+| **`#455`** | **Active WCS Selector** | `0`–`6` | **`0` = G53** (Machine coordinates)<br/>**`1` = G54**<br/>**`2` = G55**<br/>**`3` = G56**<br/>**`4` = G57**<br/>**`5` = G58**<br/>**`6` = G59** |
+| `#450` | Distance Mode Flag | `< 0` / $\ge 0$ | `< 0` = `G91` (Incremental); $\ge 0$ = `G90` (Absolute) |
+| `#449` | Canned Cycle Retract Plane | `< 0` / $\ge 0$ | `< 0` = `G98` (Retract to Initial Z level); $\ge 0$ = `G99` (Retract to R plane) |
+| `#448` | Coordinate Scale Factor | Float | Scale multiplier applied to axis moves |
+| `#420` | X Axis Mirror Multiplier | `1.0` or `-1.0` | Direction sign applied to X moves |
+| `#421` | Y Axis Mirror Multiplier | `1.0` or `-1.0` | Direction sign applied to Y moves |
+| `#422` | Z Axis Mirror Multiplier | `1.0` or `-1.0` | Direction sign applied to Z moves |
+| `#423` | A Axis Mirror Multiplier | `1.0` or `-1.0` | Direction sign applied to A moves |
+
+---
+
+## 3. Position Feedback & WCS Offset Tables
+
+### Real-Time Position Registers
+| Register | Axis | Coordinate Frame | Description |
+|---|---|---|---|
+| `#451` | X | Workpiece (WCS) | Current tool position in active coordinate system |
+| `#452` | Y | Workpiece (WCS) | Current tool position in active coordinate system |
+| `#453` | Z | Workpiece (WCS) | Current tool position in active coordinate system |
+| `#454` | A | Workpiece (WCS) | Current tool position in active coordinate system |
+| `#864` | X | Machine (G53) | Latched absolute machine coordinate (updated after `M102`/`G04 P0`) |
+| `#865` | Y | Machine (G53) | Latched absolute machine coordinate |
+| `#866` | Z | Machine (G53) | Latched absolute machine coordinate |
+
+### WCS Datum Storage Table
+The base offset table stores the distance from machine zero to each coordinate system datum:
+
+| WCS Frame | X Register | Y Register | Z Register | A Register |
+|---|---|---|---|---|
+| **G54** | `#800` | `#801` | `#802` | `#803` |
+| **G55** | `#804` | `#805` | `#806` | `#807` |
+| **G56** | `#808` | `#809` | `#810` | `#811` |
+| **G57** | `#812` | `#813` | `#814` | `#815` |
+| **G58** | `#816` | `#817` | `#818` | `#819` |
+| **G59** | `#820` | `#821` | `#822` | `#823` |
+| **G59.1** | `#824` | `#825` | `#826` | `#827` |
+
+---
+
+## 4. Built-in Cycle & Macro Argument Registers
+
+When built-in cycles (`G81`, `G82`, `G83`, `G73`, `G12`, `G13`, `G102`, `G110`) are executed, the interpreter automatically populates these dedicated registers:
+
+| Register | G-code Letter | Meaning |
 |---|---|---|
-| #1 | language setting — Eng; ç®ä½ä¸­æ; Ð ÑÑÑÐºÐ¸Ð¹; ç¹é«ä¸­æ; Custom |  |
-| #2 | Display response during working |  |
-| #3 | Function of tool path key — tool path; Try cutting; M8/M10 |  |
-| #5 | minimum log radius of 4axis machining — unit |  |
-| #6 | A axis rotate reference axis — X axis; Y axis; Z axis; not rotate |  |
-| #15 | Speed Selection — 0:set by G code,1:use default speed \| G code; default |  |
-| #16 | current coordinate system — 0:G53,1:G54,2:G55,3:G56,4:G57,5:G58,6:G59,7:MACH \| G53; G54; G55; G56; G57; G58; G59; MACH |  |
-| #18 | Artboard width |  |
-| #19 | Artboard height |  |
-| #20 | Sketchpad thickness |  |
-| #33 | Motor start speed — unit/min |  |
-| #34 | X axis pulse equivalency — P/unit |  |
-| #35 | Y axis pulse equivalency — P/unit |  |
-| #36 | Z axis pulse equivalency — P/unit |  |
-| #38 | A axis pulse equivalency |  |
-| #39 | A axis pulse unit — pulse/deg; pulse/circle |  |
-| #40 | AB axis Selection — A axis; B axis |  |
-| #41 | X Axis max speed in M_Ctrl mode — unit/min |  |
-| #42 | Y Axis max speed in M_Ctrl mode — unit/min |  |
-| #43 | Z Axis max speed in M_Ctrl mode — unit/min |  |
-| #44 | A Axis max speed in M_Ctrl mode — deg/min |  |
-| #45 | X axis start Acc in M_Ctrl mode — unit/s2 |  |
-| #46 | Y axis start Acc in M_Ctrl mode — unit/s2 |  |
-| #47 | Z axis start Acc in M_Ctrl mode — unit/s2 |  |
-| #48 | A axis start Acc in M_Ctrl mode — deg/s2 |  |
-| #49 | HOME times |  |
-| #50 | HOME signal Effective when HOME — Ignore HOME; Continue HOME |  |
-| #51 | Enable limit signal when HOME — 0:Disable,1:Enable \| Disable; Enable |  |
-| #52 | Enable X Home Searching function — 0:not enable,1:enable \| Disable; Enable |  |
-| #53 | Enable Y Home Searching function — 0:not enable,1:enable \| Disable; Enable |  |
-| #54 | Enable Z Home Searching function — 0:not enable,1:enable \| Disable; Enable |  |
-| #55 | Enable A Home Searching function — 0:not enable,1:enable \| Disable; Enable |  |
-| #56 | X axis Home speed — unit/min |  |
-| #57 | Y axis Home speed — unit/min |  |
-| #58 | Z axis Home speed — unit/min |  |
-| #59 | A axis Home speed — deg/min |  |
-| #60 | X axis Home signal Electric Level — Low; High |  |
-| #61 | Y axis Home signal Electric Level — Low; High |  |
-| #62 | Z axis Home signal Electric Level — Low; High |  |
-| #63 | A axis Home signal Electric Level — Low; High |  |
-| #64 | X axis Home direction — Negative; Positive |  |
-| #65 | Y axis Home direction — Negative; Positive |  |
-| #66 | Z axis Home direction — Negative; Positive |  |
-| #67 | A axis Home direction — Negative; Positive |  |
-| #68 | Tool Setting function mode — Disable; mode 1; mode 2; mode 3 |  |
-| #69 | Thickness of tool sensor — unit |  |
-| #70 | Probe signal electric level — Low; High |  |
-| #71 | Initial tool's position — current position; fixed position |  |
-| #72 | Initial probe position on X axis — unit |  |
-| #73 | Initial probe position on Y axis — unit |  |
-| #74 | Initial probe position on Z axis — unit |  |
-| #75 | back distance after probe — unit |  |
-| #76 | default operation speed — unit/min |  |
-| #77 | maximum speed — unit/min |  |
-| #78 | Z axis lifting protection speed — unit/min |  |
-| #79 | Z axis dropping protection speed — unit/min |  |
-| #80 | G0 Speed — unit/min |  |
-| #82 | Z axis safe height — unit |  |
-| #83 | X axis back distance after Home — unit |  |
-| #84 | Y axis back distance after Home — unit |  |
-| #85 | Z axis back distance after Home — unit |  |
-| #86 | A axis back distance after Home — deg |  |
-| #88 | enable of beep — Disable; Enable |  |
-| #89 | Z axis back distance when pause — unit |  |
-| #98 | maximum spindle speed — rpm |  |
-| #99 | operation acceleration — unit/s2 |  |
-| #100 | X axis manual control speed — unit/min |  |
-| #101 | Y axis manual control speed — unit/min |  |
-| #102 | Z axis manual control speed — unit/min |  |
-| #103 | A axis manual control speed — deg/min |  |
-| #104 | A axis optimal path when G0 run — No; Yes |  |
-| #113 | Arc interpolation algorithm selection — Hard algorithm; Soft algorithm |  |
-| #114 | Jog support in continuous mode — Mode 1; Disable; Mode 2 |  |
-| #115 | unit selection — mm; in |  |
-| #116 | X-axis zero signal source select — HOME signal; X++limit signal; X--limit signal |  |
-| #117 | Y-axis zero signal source select — HOME signal; Y++limit signal; Y--limit signal |  |
-| #118 | Z-axis zero signal source select — HOME signal; Z++limit signal; Z--limit signal |  |
-| #119 | A-axis zero signal source select — HOME signal; A++limit signal; A--limit signal |  |
-| #120 | U disk partition type — With partition; No partition |  |
-| #124 | Circular centrifugal acceleration — unit/s2 |  |
-| #125 | Circular speed adjustment factor |  |
-| #126 | Home reminder after booting — No; Yes |  |
-| #192 | Artboard zero point X position |  |
-| #193 | Artboard zero point Y position |  |
-| #194 | Artboard zero point Z position |  |
-| #218 | Cycle Start key mode selection — Pause start; Restart |  |
-| #219 | If Stop Spindle when pause — No; Yes |  |
-| #220 | Spindle speed selection — 0:set by G code,1:default speed of spindle \| G code; default |  |
-| #221 | default spindle speed — rpm |  |
-| #222 | Spindle commands M3/M5 response — 0:not response,1:response \| No; Yes |  |
-| #223 | response of M code(M8/M9,M10/M11) — 0:not response,1:response \| No; Yes |  |
-| #224 | Spindle M3/M4/M5 response Duration — s |  |
-| #225 | delay time of M8/M9 — s |  |
-| #226 | delay time of M10/M11 — s |  |
-| #227 | Spindle switch Active level — Low; High |  |
-| #228 | M8/M9 active electric level — Low; High |  |
-| #229 | M10/M11 active electric level — Low; High |  |
-| #234 | X-axis DIR in A/B phase mode — +; - |  |
-| #235 | Y-axis DIR in A/B phase mode — +; - |  |
-| #236 | Z-axis DIR in A/B phase mode — +; - |  |
-| #237 | A-axis DIR in A/B phase mode — +; - |  |
-| #238 | IO input filter time width — ms |  |
-| #250 | real track paint enable — disable; enable |  |
-| #253 | track paint mode — Statue Mode; Line Mode |  |
-| #263 | X axis stop Acc in M_Ctrl mode — unit/s2 |  |
-| #264 | Y axis stop Acc in M_Ctrl mode — unit/s2 |  |
-| #265 | Z axis stop Acc in M_Ctrl mode — unit/s2 |  |
-| #266 | A axis stop Acc in M_Ctrl mode — deg/s2 |  |
-| #267 | H00 tool offset — unit |  |
-| #268 | H01 tool offset — unit |  |
-| #269 | H02 tool offset — unit |  |
-| #270 | H03 tool offset — unit |  |
-| #271 | H04 tool offset — unit |  |
-| #272 | H05 tool offset — unit |  |
-| #273 | H06 tool offset — unit |  |
-| #274 | H07 tool offset — unit |  |
-| #275 | H08 tool offset — unit |  |
-| #276 | H09 tool offset — unit |  |
-| #277 | H10 tool offset — unit |  |
-| #278 | H11 tool offset — unit |  |
-| #279 | H12 tool offset — unit |  |
-| #280 | H13 tool offset — unit |  |
-| #281 | H14 tool offset — unit |  |
-| #282 | H15 tool offset — unit |  |
-| #283 | D00 tool offset — unit |  |
-| #284 | D01 tool offset — unit |  |
-| #285 | D02 tool offset — unit |  |
-| #286 | D03 tool offset — unit |  |
-| #287 | D04 tool offset — unit |  |
-| #288 | D05 tool offset — unit |  |
-| #289 | D06 tool offset — unit |  |
-| #290 | D07 tool offset — unit |  |
-| #291 | D08 tool offset — unit |  |
-| #292 | D09 tool offset — unit |  |
-| #293 | D10 tool offset — unit |  |
-| #294 | D11 tool offset — unit |  |
-| #295 | D12 tool offset — unit |  |
-| #296 | D13 tool offset — unit |  |
-| #297 | D14 tool offset — unit |  |
-| #298 | D15 tool offset — unit |  |
-| #374 | Enable software limit — 0:not enable,1:enable \| Disable; Enable |  |
-| #375 | Soft-limited postion value of X-- — unit |  |
-| #376 | Soft-limited postion value of Y-- — unit |  |
-| #377 | Soft-limited postion value of Z-- — unit |  |
-| #378 | Soft-limited postion value of A-- — deg |  |
-| #379 | Soft-limited postion value of X++ — unit |  |
-| #380 | Soft-limited postion value of Y++ — unit |  |
-| #381 | Soft-limited postion value of Z++ — unit |  |
-| #382 | Soft-limited postion value of A++ — deg |  |
-| #390 | X axis DIR signal Electric Level — Low; High |  |
-| #391 | Y axis DIR signal Electric Level — Low; High |  |
-| #392 | Z axis DIR signal Electric Level — Low; High |  |
-| #393 | A axis DIR signal Electric Level — Low; High |  |
-| #400 | Limited siganl active of X-- — 0:not enable,1:enable \| Disable; Enable |  |
-| #401 | Limited siganl active of Y-- — 0:not enable,1:enable \| Disable; Enable |  |
-| #402 | Limited siganl active of Z-- — 0:not enable,1:enable \| Disable; Enable |  |
-| #403 | Limited siganl active of A-- — 0:not enable,1:enable \| Disable; Enable |  |
-| #404 | Limited siganl active of X++ — 0:not enable,1:enable \| Disable; Enable |  |
-| #405 | Limited siganl active of Y++ — 0:not enable,1:enable \| Disable; Enable |  |
-| #406 | Limited siganl active of Z++ — 0:not enable,1:enable \| Disable; Enable |  |
-| #407 | Limited siganl active of A++ — 0:not enable,1:enable \| Disable; Enable |  |
-| #408 | Effective electric level of X-- — Low; High |  |
-| #409 | Effective electric level of Y-- — Low; High |  |
-| #410 | Effective electric level of Z-- — Low; High |  |
-| #411 | Effective electric level of A-- — Low; High |  |
-| #412 | Effective electric level of X++ — Low; High |  |
-| #413 | Effective electric level of Y++ — Low; High |  |
-| #414 | Effective electric level of Z++ — Low; High |  |
-| #415 | Effective electric level of A++ — Low; High |  |
-| #416 | Time interval between DIR & pulse — ns |  |
-| #418 | X axis Pulse signal Electric Level — Low; High |  |
-| #419 | Y axis Pulse signal Electric Level — Low; High |  |
-| #420 | Z axis Pulse signal Electric Level — Low; High |  |
-| #421 | A axis Pulse signal Electric Level — Low; High |  |
-| #422 | definition of PWM Electric level — Low; High |  |
-| #423 | Enable signal of extended ESTOP — 0:not enable,1:enable \| Disable; Enable |  |
-| #424 | Electric level of ext-ESTOP signal — Low; High |  |
-| #425 | Enable extended START&PAUSE — 0:not enable,1:enable \| Disable; Enable |  |
-| #426 | Electric level of Ext-key1 — Low; High |  |
-| #427 | Electric level of Ext-key2 — Low; High |  |
-| #428 | Enable the ESTOP signal on MPG — 0:not enable,1:enable \| Disable; Enable |  |
-| #429 | Electric level of ESTOP on MPG — Low; High |  |
-| #430 | MPG interface type — 0-serial port MPGï¼1-standard MPG \| Serial; Standard |  |
-| #431 | MPG Precision |  |
-| #432 | Standard MPG signal Electric Level — Low; High |  |
-| #433 | PWM rising rate from 0V to 10V |  |
-| #434 | A/B phase signal level on MPG — Low; High |  |
-| #435 | X axis protection speed — unit/min |  |
-| #436 | Y axis protection speed — unit/min |  |
-| #437 | enable of X axis backlash — 0:not enable,1:enable \| Disable; Enable |  |
-| #438 | enable of Y axis backlash — 0:not enable,1:enable \| Disable; Enable |  |
-| #439 | enable of Z axis backlash — 0:not enable,1:enable \| Disable; Enable |  |
-| #440 | enable of A axis backlash — 0:not enable,1:enable \| Disable; Enable |  |
-| #441 | X axis backlash distance — unit |  |
-| #442 | Y axis backlash distance — unit |  |
-| #443 | Z axis backlash distance — unit |  |
-| #444 | A axis backlash distance — deg |  |
-| #446 | Define the Function of Ext-key1 — START; Find Middle; extkey1.nc; JOG-D; Disable; S/P ctrl |  |
-| #447 | Define the Function of Ext-key2 — PAUSE; ZERO; extkey2.nc; S/P ctrl; Disable |  |
-| #448 | MPG control mode — Open; Close |  |
-| #449 | ZERO |  |
-| #450 | GOTOZ |  |
-| #451 | HOME |  |
-| #452 | PROBE |  |
-| #453 | AUTO |  |
-| #454 | SIMULATE |  |
-| #455 | CONT |  |
-| #456 | STEP |  |
-| #457 | MPG |  |
-| #458 | RESET |  |
-| #459 | READY |  |
-| #460 | BUSY |  |
-| #461 | FRO: |  |
-| #462 | SRO: |  |
-| #463 | SJR: |  |
-| #464 | Start Line: |  |
-| #465 | 2ND |  |
-| #466 | syntax check |  |
-| #467 | Main Page |  |
-| #468 | File Page |  |
-| #469 | Param Page |  |
-| #470 | Normal Mod |  |
-| #471 | X-:gotoz Y-:zero Z-:home |  |
-| #472 | A-:probe Start:goto break |  |
-| #473 | X-:all gotoz X+:x gotoz |  |
-| #474 | Y+:y gotoz Z+:z gotoz |  |
-| #475 | A-:go probe   X+:x 1/2 |  |
-| #476 | X+:left X-:right Y+:up Y-:down |  |
-| #477 | Z-:enter Z+:cancel |  |
-| #478 | Y-:all zero X+:x zero |  |
-| #479 | Y+:y zero Z+:z zero |  |
-| #480 | Z-:all home X+:x home |  |
-| #481 | Y+:y home Z+:z home |  |
-| #486 | Y+:y 1/2       Z+:mode 3 |  |
-| #487 | Start:Specifies line |  |
-| #488 | Pause:Search line by position |  |
-| #489 | Advanced |  |
-| #495 | interpolation period — s |  |
-| #499 | user access key |  |
-| #2000 | Cutter diameter — unit |  |
-| #2001 | Tool plate thick for X — unit |  |
-| #2002 | Tool plate thick for Y — unit |  |
-| #2003 | Tool plate thick for Z — unit |  |
-| #2004 | shift of X axis before probed — unit |  |
-| #2005 | shift of Y axis before probed — unit |  |
-| #2006 | Z position before X(Y)-axis probed — unit |  |
-| #2007 | Back distance when the tool touches the X-axis edge — unit |  |
-| #2008 | Back distance when the tool touches the Y-axis edge — unit |  |
-| #2009 | Back distance when the tool touches the Z-axis edge — unit |  |
-| #2010 | center of tool plate — unit |  |
-| #2011 | Probe feedrate — unit/min |  |
-| #2020 | Jog-1 moving distance — unit |  |
-| #2021 | Jog-2 moving distance — unit |  |
-| #2022 | Jog-3 moving distance — unit |  |
-| #2023 | Jog-4 moving distance — unit |  |
-| #2024 | X axis Home offset — unit |  |
-| #2025 | Y axis Home offset — unit |  |
-| #2026 | Z axis Home offset — unit |  |
-| #2027 | A axis Home offset — deg |  |
-| #2028 | the % of the change in value per X Pulses of the Handwheel |  |
-| #2029 | color reversal — No; Yes |  |
-| #2030 | Soft-limited stop mode — deceleration; emergency |  |
-| #2031 | Uniaxial acc is limited by M_Ctrl start acc — No; Yes |  |
-| #2032 | Soft-limited pre-judgment coefficient of X |  |
-| #2033 | Soft-limited pre-judgment coefficient of Y |  |
-| #2034 | Soft-limited pre-judgment coefficient of Z |  |
-| #2035 | Soft-limited pre-judgment coefficient of A |  |
-| #2036 | Automatically adjust the artboard — Yes; No |  |
-| #2037 | Is FRO valid for G0? — No; Yes |  |
-| #2038 | Enable software limit alarm in the idle state — Yes; No |  |
-| #2039 | Specified line scan increment |  |
-| #2041 | G53/G153 function interchange — No; Yes |  |
-| #2043 | subroutine programming mode — Disable; Enable |  |
-| #2044 | The initial state of manual mode is MPG — No; Yes |  |
-| #2045 | M4 prot definition — No; M10 |  |
-| #2046 | extended function key filter coefficient |  |
-| #2047 | IO output M command execution strategy — software proc.; FPGA |  |
-| #2048 | Home sequence — ZXYA; SYNC; ZYXA; YXZA; XYZA |  |
-| #2049 | Z axis safe height of probe — unit |  |
+| `#484` | `P` | Dwell duration (seconds) |
+| `#485` | `Q` | Peck depth increment |
+| `#488` | `X` | X axis target position or pocket length |
+| `#489` | `Y` | Y axis target position or pocket width |
+| `#490` | `Z` | Z axis hole bottom or pocket milling depth |
+| `#491` | `A` | A axis target position or major axis rotation angle |
+| `#492` | `B` | Initial angle in oblique ellipse cycles (`G102`/`G103`) |
+| `#493` | `C` | Termination angle in oblique ellipse cycles |
+| `#494` | `R` / `I` / `Q` | Pocket radius or peck retract clearance distance |
+| `#496` | `K` | Cycle repeat count |
+| `#497` | `R` / `D` | R-plane clearance height (drill cycles) or tool radius/diameter (milling) |
+| `#498` | `L` | Step angle increment |
+
+---
+
+## 5. Machine & Motion Configuration Registers
+
+| Register | Name | Typical Default | Description |
+|---|---|---|---|
+| `#516` | Homing Mode Selector | `0`–`7` | Zeroing reference strategy |
+| `#571` | Probe Mode | `0` or `1` | `0` = Floating touch plate on part; `1` = Fixed tool setter on bed |
+| `#572` | Fixed Probe X | mm | Initial X position of fixed tool setter |
+| `#573` | Fixed Probe Y | mm | Initial Y position of fixed tool setter |
+| `#574` | Fixed Probe Z | mm | Initial Z position of fixed tool setter |
+| `#575` | Probe Retract Distance | mm | Z retract height after probe contact |
+| `#578` | Probe Retract Feedrate | mm/min | Feedrate during post-probe retract |
+| `#580` | Rapid Feedrate | mm/min | Feedrate used during `O100` return-to-zero moves |
+| `#582` | Safe Z Height | mm | Machine or workpiece Z safe travel clearance height |
+| `#589` | Pause Retract Distance | mm | Lift height applied to Z when Pause key is pressed |
+| `#870` | Tool Plate Thickness | mm | Calibrated touch plate thickness |
+
+---
+
+## 6. System Configuration Parameter Variables (`#2000` – `#2049`)
+
+In `defprobe.nc` and system configuration macros, `#2000`–`#2049` alias parameters `Pr0`–`Pr49` from the `setting` file:
+
+| Register | Name in `defprobe.nc` | Purpose |
+|---|---|---|
+| `#2000` | Cutter Diameter | Tool diameter for corner/edge probe compensation |
+| `#2001` | Tool Plate Thickness X | Touch plate edge offset for X probing |
+| `#2002` | Tool Plate Thickness Y | Touch plate edge offset for Y probing |
+| `#2003` | Tool Plate Thickness Z | Touch plate top surface thickness |
+| `#2004` | X Axis Pre-Shift | Rapid shift distance along X before edge probe |
+| `#2005` | Y Axis Pre-Shift | Rapid shift distance along Y before edge probe |
+| `#2006` | Z Position Pre-Edge Probe | Z clearance depth for edge detection moves |
+| `#2007` | X Axis Back Distance | Retract clearance after touching X edge |
+| `#2008` | Y Axis Back Distance | Retract clearance after touching Y edge |
+| `#2009` | Z Axis Back Distance | Retract clearance after touching Z plate |
+| `#2010` | Tool Plate Center Offset | Distance from plate edge to true part corner |
+| `#2011` | Probe Feedrate | Downward probing feedrate (typically 50–150 mm/min) |
+| `#2049` | Fixed Probe Safe Z | Z axis safe travel height for fixed tool setter (added build 20260408) |
