@@ -24,15 +24,15 @@ description: Rules for writing G-code and macros for the DDCS V3 / DM500 CNC con
 
 ## Read next
 
-- `differences.md`
-- `syntax.md`
-- `variables.md`
-- `dialogs.md`
-- `hazards.md`
-- `operation.md`
-- `ui.md`
-- `integration.md`
-- `evidence.md`
-- `examples/`
-- `community/`
-- `vendor/`
+- `differences.md`: habits from Fanuc Macro B or the other DDCS that are wrong here
+- `syntax.md`: the code forms that run, are refused or silently misbehave; the aliases
+- `variables.md`: every #variable and parameter: its type, who reads and writes it, what survives a reboot
+- `dialogs.md`: operator prompts and number entry
+- `hazards.md`: what silently goes wrong or does damage, measured and not measured
+- `operation.md`: using the controller day to day: homing, jogging, zeroing, loading and running a file
+- `ui.md`: keys, menus and screens
+- `integration.md`: reaching the controller from a PC: which doors are open, shares, hook files
+- `evidence.md`: every measured fact with the bench test behind it
+- `examples/`: archived test programs, word for word, with their results
+- `community/`: other people's notes, ranked below the measured files
+- `vendor/`: the vendor's own files, when the person has put them there
